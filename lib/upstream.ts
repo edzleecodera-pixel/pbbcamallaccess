@@ -16,7 +16,6 @@ export function headerVariants(accept: string): Record<string, string>[] {
     "user-agent": ua,
     accept,
     "accept-language": "en-US,en;q=0.9",
-    "accept-encoding": "gzip, deflate, br",
     referer: ref,
     origin: org,
     "cache-control": "no-cache",
@@ -58,7 +57,7 @@ export async function fetchWithVariants(
       if (res.ok) return res;
       if (res.status === 404) return res;
     } catch {
-      /* try next */
+      /* next */
     }
   }
   return null;
