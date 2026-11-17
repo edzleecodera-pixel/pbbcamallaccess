@@ -44,11 +44,7 @@ async function resolve(
   );
 
   if (!upstream) {
-    upstream = await fetchWithVariants(
-      `${SOURCE_PROXY}/${channel.id}/${relative}${suffix}`,
-      accept,
-      timeout
-    );
+    upstream = await fetchWithVariants(`${SOURCE_PROXY}/${channel.id}/${relative}${suffix}`, accept, timeout);
   }
 
   if (!upstream) return new Response("upstream unreachable", { status: 502 });
@@ -73,16 +69,16 @@ async function resolve(
     });
   }
 
-  const headers = new Headers({
-    "access-control-allow-origin": "*",
-    "cache-control": cacheControl(relative),
-    "content-type": upstream.headers.get("content-type") || "video/mp4",
+  // No content-length: undici decompresses the body, so the upstream value
+  // would describe the compressed size and truncate the segment.
+  return new Response(request.method === "HEAD" ? null : upstream.body, {
+    status: 200,
+    headers: {
+      "access-control-allow-origin": "*",
+      "cache-control": cacheControl(relative),
+      "content-type": upstream.headers.get("content-type") || "video/mp4",
+    },
   });
-
-  const length = upstream.headers.get("content-length");
-  if (length) headers.set("content-length", length);
-
-  return new Response(request.method === "HEAD" ? null : upstream.body, { status: 200, headers });
 }
 
 export async function GET(
