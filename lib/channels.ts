@@ -46,4 +46,5 @@ export const CHANNELS: Channel[] = [
   },
 ];
 
-export const getChannel = (id: string) => CHANNELS.find((c) => c.id === id);
+export const getChannel = (id: string): Channel | undefined =>
+  CHANNELS.find((c) => c.id === id);
