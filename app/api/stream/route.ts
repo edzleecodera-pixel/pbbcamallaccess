@@ -1,6 +1,5 @@
 import { getChannel } from "@/lib/channels";
 import { buildPsshBase64 } from "@/lib/dash";
-import { fetchWithVariants, MANIFEST_ACCEPT } from "@/lib/upstream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,20 +13,6 @@ export async function GET(request: Request): Promise<Response> {
   if (!channel) return Response.json({ error: "unknown channel" }, { status: 404 });
 
   const proxied = `/api/proxy/stream/${channel.id}/manifest.mpd`;
-  const requestedProxy = url.searchParams.get("proxy") === "1";
-
-  let useProxy = requestedProxy;
-
-  // Probe: only route segments direct if the browser will actually be allowed.
-  if (!useProxy) {
-    const probe = await fetchWithVariants(
-      `${channel.upstreamBase}manifest.mpd`,
-      MANIFEST_ACCEPT,
-      5000
-    );
-    if (!probe || !probe.ok) useProxy = true;
-    else if (!/<MPD[\s>]/i.test(await probe.text())) useProxy = true;
-  }
 
   return Response.json(
     {
@@ -38,10 +23,14 @@ export async function GET(request: Request): Promise<Response> {
       drmMode: channel.drmMode,
       clearKeys: channel.requiresDrm ? { [channel.keyId]: channel.key } : {},
       ClearKey: { k1: channel.keyId, k2: channel.key },
-      manifestUri: `${proxied}?proxy=${useProxy ? 1 : 0}&t=${Date.now()}`,
+      // Plan 1: browser talks to Akamai directly.
+      directManifestUri: `${channel.upstreamBase}manifest.mpd`,
+      // Plan 2: server rewrites manifest, browser still pulls segments.
+      manifestUri: `${proxied}?proxy=0&t=${Date.now()}`,
+      // Plan 3: everything through us.
       proxiedManifestUri: `${proxied}?proxy=1&t=${Date.now()}`,
-      baseUrl: useProxy ? `/api/proxy/stream/${channel.id}/` : channel.upstreamBase,
-      degraded: useProxy,
+      upstreamBase: channel.upstreamBase,
+      proxyBase: `/api/proxy/stream/${channel.id}/`,
       pssh: buildPsshBase64(channel.keyId),
     },
     { headers: { "cache-control": "no-store" } }
