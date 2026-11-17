@@ -15,23 +15,14 @@ export function loadShaka(): Promise<any> {
 
 export function toU8(input: any): Uint8Array {
   if (ArrayBuffer.isView(input)) {
-    return new Uint8Array(
-      input.buffer as ArrayBuffer,
-      input.byteOffset,
-      input.byteLength
-    );
+    return new Uint8Array(input.buffer as ArrayBuffer, input.byteOffset, input.byteLength);
   }
   if (input instanceof ArrayBuffer) return new Uint8Array(input);
   return new Uint8Array(0);
 }
 
 function boxType(data: Uint8Array, offset: number): string {
-  return String.fromCharCode(
-    data[offset],
-    data[offset + 1],
-    data[offset + 2],
-    data[offset + 3]
-  );
+  return String.fromCharCode(data[offset], data[offset + 1], data[offset + 2], data[offset + 3]);
 }
 
 function setBoxType(data: Uint8Array, offset: number, value: string): void {
@@ -40,23 +31,17 @@ function setBoxType(data: Uint8Array, offset: number, value: string): void {
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) {
-    out[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
-  }
+  for (let i = 0; i < 16; i++) out[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
   return out;
 }
 
-/**
- * Rewrites the `tenc` default KID in an init segment and neutralises every
- * embedded pssh box, so ClearKey lookups always resolve against our key.
- */
 export function patchInitSegment(data: Uint8Array, keyId: string): void {
   const hex = normHex(keyId);
   if (!data || data.byteLength < 64 || hex.length !== 32) return;
 
   const kid = hexToBytes(hex);
-
   let original: Uint8Array | null = null;
+
   for (let i = 0; i + 28 <= data.byteLength; i++) {
     if (boxType(data, i) === "tenc") {
       original = data.slice(i + 12, i + 28);
@@ -64,11 +49,7 @@ export function patchInitSegment(data: Uint8Array, keyId: string): void {
     }
   }
 
-  const view = new DataView(
-    data.buffer as ArrayBuffer,
-    data.byteOffset,
-    data.byteLength
-  );
+  const view = new DataView(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
 
   const walk = (start: number, end: number): void => {
     let cursor = start;
@@ -121,17 +102,12 @@ export function patchInitSegment(data: Uint8Array, keyId: string): void {
   }
 }
 
-/** Neutralises pssh boxes inside a media segment's moof. */
 export function patchMediaSegment(data: Uint8Array): void {
   if (!data || data.byteLength < 32) return;
 
-  const view = new DataView(
-    data.buffer as ArrayBuffer,
-    data.byteOffset,
-    data.byteLength
-  );
-
+  const view = new DataView(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
   let cursor = 0;
+
   while (cursor + 8 <= data.byteLength) {
     let size = view.getUint32(cursor, false);
     const type = boxType(data, cursor + 4);
@@ -158,7 +134,6 @@ export function patchMediaSegment(data: Uint8Array): void {
   }
 }
 
-/** Client-side safety net that mirrors the server-side manifest/segment work. */
 export function installFilters(player: any, shaka: any, info: any): void {
   const engine = player.getNetworkingEngine();
   if (!engine) return;
@@ -168,14 +143,18 @@ export function installFilters(player: any, shaka: any, info: any): void {
   engine.registerResponseFilter((requestType: any, response: any) => {
     if (!response || !response.data) return;
 
+    // Server already patched this manifest; re-apply so refreshes stay correct
+    // even if the proxy body is served from a cache layer.
     if (requestType === RequestType.MANIFEST) {
       try {
         const text = new TextDecoder().decode(toU8(response.data));
-        response.data = new TextEncoder().encode(
-          patchManifest(text, { baseUrl: info.baseUrl, keyId: info.keyId })
-        ).buffer;
+        if (!/<BaseURL>/i.test(text)) {
+          response.data = new TextEncoder().encode(
+            patchManifest(text, { baseUrl: info.baseUrl, keyId: info.keyId })
+          ).buffer;
+        }
       } catch {
-        /* leave untouched */
+        /* ignore */
       }
       return;
     }
@@ -184,18 +163,16 @@ export function installFilters(player: any, shaka: any, info: any): void {
       try {
         const bytes = toU8(response.data);
         const uri = String(response.uri || response.originalUri || "");
-        if (uri.indexOf("_init.mp4") !== -1) {
-          patchInitSegment(bytes, info.keyId);
-        } else {
-          patchMediaSegment(bytes);
-        }
-        response.data = bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength
-        );
+        if (uri.indexOf("_init.mp4") !== -1) patchSegmentInit(bytes, info.keyId);
+        else patchMediaSegment(bytes);
+        response.data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       } catch {
-        /* leave untouched */
+        /* ignore */
       }
     }
   });
+}
+
+function patchSegmentInit(bytes: Uint8Array, keyId: string): void {
+  patchInitSegment(bytes, keyId);
 }
