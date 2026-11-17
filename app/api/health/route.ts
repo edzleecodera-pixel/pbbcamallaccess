@@ -22,10 +22,7 @@ export async function GET(): Promise<Response> {
       const isManifest = /<MPD[\s>]/i.test(body);
       results.push({ variant: i, status: res.status, isManifest });
       if (res.ok && isManifest) {
-        return Response.json(
-          { ok: true, workingVariant: i, results },
-          { headers: { "cache-control": "no-store" } }
-        );
+        return Response.json({ ok: true, workingVariant: i, results }, { headers: { "cache-control": "no-store" } });
       }
     } catch (error: any) {
       results.push({ variant: i, status: 0, error: error?.name || "failed" });
@@ -40,10 +37,7 @@ export async function GET(): Promise<Response> {
     });
     results.push({ variant: "source-proxy", status: res.status });
     if (res.ok) {
-      return Response.json(
-        { ok: true, workingVariant: "source-proxy", results },
-        { headers: { "cache-control": "no-store" } }
-      );
+      return Response.json({ ok: true, workingVariant: "source-proxy", results }, { headers: { "cache-control": "no-store" } });
     }
   } catch {
     results.push({ variant: "source-proxy", status: 0 });
