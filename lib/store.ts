@@ -36,9 +36,7 @@ export async function touch(sid: string): Promise<void> {
   }
 
   memory.set(sid, now);
-  for (const [id, seen] of memory) {
-    if (now - seen > CUTOFF_MS) memory.delete(id);
-  }
+  for (const [id, seen] of memory) if (now - seen > CUTOFF_MS) memory.delete(id);
 }
 
 export async function count(): Promise<number> {
@@ -50,8 +48,6 @@ export async function count(): Promise<number> {
     if (card && typeof card.result === "number") return card.result;
   }
 
-  for (const [id, seen] of memory) {
-    if (now - seen > CUTOFF_MS) memory.delete(id);
-  }
+  for (const [id, seen] of memory) if (now - seen > CUTOFF_MS) memory.delete(id);
   return memory.size;
 }
