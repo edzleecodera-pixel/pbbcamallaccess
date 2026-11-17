@@ -21,11 +21,11 @@ export function toU8(input: any): Uint8Array {
   return new Uint8Array(0);
 }
 
-const boxType = (data: Uint8Array, offset: number): string =>
-  String.fromCharCode(data[offset], data[offset + 1], data[offset + 2], data[offset + 3]);
+const boxType = (d: Uint8Array, o: number): string =>
+  String.fromCharCode(d[o], d[o + 1], d[o + 2], d[o + 3]);
 
-const setBoxType = (data: Uint8Array, offset: number, value: string): void => {
-  for (let i = 0; i < 4; i++) data[offset + i] = value.charCodeAt(i);
+const setBoxType = (d: Uint8Array, o: number, v: string): void => {
+  for (let i = 0; i < 4; i++) d[o + i] = v.charCodeAt(i);
 };
 
 const hexToBytes = (hex: string): Uint8Array => {
@@ -51,34 +51,33 @@ export function patchInitSegment(data: Uint8Array, keyId: string): void {
   const view = new DataView(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
 
   const walk = (start: number, end: number): void => {
-    let cursor = start;
-    while (cursor + 8 <= end) {
-      let size = view.getUint32(cursor, false);
-      const type = boxType(data, cursor + 4);
-      if (size === 0) size = end - cursor;
-      if (size < 8 || cursor + size > end) break;
+    let c = start;
+    while (c + 8 <= end) {
+      let size = view.getUint32(c, false);
+      const type = boxType(data, c + 4);
+      if (size === 0) size = end - c;
+      if (size < 8 || c + size > end) break;
 
       if (type === "pssh") {
-        const remainder = size - 52;
-        if (size === 52 || remainder >= 8) {
-          view.setUint32(cursor, 52, false);
-          setBoxType(data, cursor + 4, "free");
-          view.setUint32(cursor + 8, 0x01000000, false);
-          data.set(hexToBytes("1077efecc0b24d02ace33c1e52e2fb4b"), cursor + 12);
-          view.setUint32(cursor + 28, 1, false);
-          data.set(kid, cursor + 32);
-          view.setUint32(cursor + 48, 0, false);
-          if (remainder >= 8) {
-            view.setUint32(cursor + 52, remainder, false);
-            setBoxType(data, cursor + 56, "free");
-            data.fill(0, cursor + 60, cursor + size);
+        const rest = size - 52;
+        if (size === 52 || rest >= 8) {
+          view.setUint32(c, 52, false);
+          setBoxType(data, c + 4, "free");
+          view.setUint32(c + 8, 0x01000000, false);
+          data.set(hexToBytes("1077efecc0b24d02ace33c1e52e2fb4b"), c + 12);
+          view.setUint32(c + 28, 1, false);
+          data.set(kid, c + 32);
+          view.setUint32(c + 48, 0, false);
+          if (rest >= 8) {
+            view.setUint32(c + 52, rest, false);
+            setBoxType(data, c + 56, "free");
+            data.fill(0, c + 60, c + size);
           }
         }
       } else if (type === "moov") {
-        walk(cursor + 8, cursor + size);
+        walk(c + 8, c + size);
       }
-
-      cursor += size;
+      c += size;
     }
   };
 
@@ -86,17 +85,11 @@ export function patchInitSegment(data: Uint8Array, keyId: string): void {
 
   if (original) {
     for (let i = 0; i + 16 <= data.byteLength; i++) {
-      let match = true;
+      let hit = true;
       for (let k = 0; k < 16; k++) {
-        if (data[i + k] !== original[k]) {
-          match = false;
-          break;
-        }
+        if (data[i + k] !== original[k]) { hit = false; break; }
       }
-      if (match) {
-        data.set(kid, i);
-        i += 15;
-      }
+      if (hit) { data.set(kid, i); i += 15; }
     }
   }
 }
@@ -105,17 +98,17 @@ export function patchMediaSegment(data: Uint8Array): void {
   if (!data || data.byteLength < 32) return;
 
   const view = new DataView(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
-  let cursor = 0;
+  let c = 0;
 
-  while (cursor + 8 <= data.byteLength) {
-    let size = view.getUint32(cursor, false);
-    const type = boxType(data, cursor + 4);
-    if (size === 0) size = data.byteLength - cursor;
-    if (size < 8 || cursor + size > data.byteLength) break;
+  while (c + 8 <= data.byteLength) {
+    let size = view.getUint32(c, false);
+    const type = boxType(data, c + 4);
+    if (size === 0) size = data.byteLength - c;
+    if (size < 8 || c + size > data.byteLength) break;
 
     if (type === "moof") {
-      const end = cursor + size;
-      let inner = cursor + 8;
+      const end = c + size;
+      let inner = c + 8;
       while (inner + 8 <= end) {
         let innerSize = view.getUint32(inner, false);
         const innerType = boxType(data, inner + 4);
@@ -128,12 +121,15 @@ export function patchMediaSegment(data: Uint8Array): void {
         inner += innerSize;
       }
     }
-
-    cursor += size;
+    c += size;
   }
 }
 
-export function installFilters(player: any, shaka: any, info: any): void {
+export type FilterContext = { baseUrl: string; keyId: string };
+
+/** Injects BaseURL + ClearKey pssh into whatever manifest was loaded, and
+ *  rewrites tenc/pssh boxes in init segments. Works for direct Akamai loads. */
+export function installFilters(player: any, shaka: any, ctx: FilterContext): void {
   const engine = player.getNetworkingEngine();
   if (!engine) return;
 
@@ -145,11 +141,9 @@ export function installFilters(player: any, shaka: any, info: any): void {
     if (requestType === RequestType.MANIFEST) {
       try {
         const text = new TextDecoder().decode(toU8(response.data));
-        if (!/<BaseURL>/i.test(text)) {
-          response.data = new TextEncoder().encode(
-            patchManifest(text, { baseUrl: info.baseUrl, keyId: info.keyId })
-          ).buffer;
-        }
+        response.data = new TextEncoder().encode(
+          patchManifest(text, { baseUrl: ctx.baseUrl, keyId: ctx.keyId })
+        ).buffer;
       } catch {
         /* ignore */
       }
@@ -160,7 +154,7 @@ export function installFilters(player: any, shaka: any, info: any): void {
       try {
         const bytes = toU8(response.data);
         const uri = String(response.uri || response.originalUri || "");
-        if (uri.indexOf("_init.mp4") !== -1) patchInitSegment(bytes, info.keyId);
+        if (uri.indexOf("_init.mp4") !== -1) patchInitSegment(bytes, ctx.keyId);
         else patchMediaSegment(bytes);
         response.data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       } catch {
