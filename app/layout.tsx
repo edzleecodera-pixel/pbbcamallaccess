@@ -3,16 +3,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "PBB Collab 3.0 | CCTV Live Surveillance",
-  description:
-    "Full-screen dynamic resizable 3-camera CCTV monitor for Pinoy Big Brother Collab 3.0.",
-  keywords: [
-    "Pinoy Big Brother",
-    "PBB CCTV",
-    "PBB Live",
-    "PBB Collab",
-    "Bahay ni Kuya",
-    "Shaka Player",
-  ],
+  description: "Full-screen dynamic resizable 3-camera CCTV monitor for Pinoy Big Brother Collab 3.0.",
+  keywords: ["Pinoy Big Brother", "PBB CCTV", "PBB Live", "PBB Collab", "Bahay ni Kuya", "Shaka Player"],
   icons: { icon: "/icon.svg" },
 };
 
