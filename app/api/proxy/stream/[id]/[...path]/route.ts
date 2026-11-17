@@ -1,11 +1,11 @@
 import { getChannel } from "@/lib/channels";
 import { patchManifest } from "@/lib/dash";
-import { upstreamHeaders, MANIFEST_ACCEPT } from "@/lib/upstream";
+import { fetchWithVariants, SOURCE_PROXY, MANIFEST_ACCEPT } from "@/lib/upstream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
-export const preferredRegion = ["sin1"];
+export const preferredRegion = ["sin1", "hkg1"];
 
 function cacheControl(path: string): string {
   if (path.endsWith(".mpd")) return "no-store";
@@ -28,39 +28,39 @@ async function resolve(
   const url = new URL(request.url);
   const proxySegments = url.searchParams.get("proxy") === "1";
   const isManifest = relative.endsWith(".mpd");
+  const accept = isManifest ? MANIFEST_ACCEPT : "*/*";
+  const timeout = isManifest ? 6000 : 15000;
 
-  const target = new URL(channel.upstreamBase + relative);
+  const query = new URLSearchParams();
   url.searchParams.forEach((value, key) => {
-    if (key !== "t" && key !== "proxy") target.searchParams.set(key, value);
+    if (key !== "t" && key !== "proxy") query.set(key, value);
   });
+  const suffix = query.toString() ? `?${query.toString()}` : "";
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(target.toString(), {
-      headers: upstreamHeaders(isManifest ? MANIFEST_ACCEPT : "*/*"),
-      cache: "no-store",
-      redirect: "follow",
-      signal: AbortSignal.timeout(isManifest ? 6000 : 15000),
-    });
-  } catch {
-    return new Response("upstream unreachable", { status: 502 });
+  let upstream = await fetchWithVariants(
+    `${channel.upstreamBase}${relative}${suffix}`,
+    accept,
+    timeout
+  );
+
+  // Last resort: relay through the original site's proxy.
+  if (!upstream) {
+    upstream = await fetchWithVariants(
+      `${SOURCE_PROXY}/${channel.id}/${relative}${suffix}`,
+      accept,
+      timeout
+    );
   }
 
-  if (!upstream.ok) {
-    return new Response(`upstream ${upstream.status}`, { status: upstream.status });
-  }
+  if (!upstream) return new Response("upstream unreachable", { status: 502 });
+  if (!upstream.ok) return new Response(`upstream ${upstream.status}`, { status: upstream.status });
 
-  // Manifests are rewritten on every refresh: fresh BaseURL + fresh pssh.
   if (isManifest) {
     const xml = await upstream.text();
-    if (!/<MPD[\s>]/i.test(xml)) {
-      return new Response("not a manifest", { status: 502 });
-    }
+    if (!/<MPD[\s>]/i.test(xml)) return new Response("not a manifest", { status: 502 });
 
     const body = patchManifest(xml, {
-      baseUrl: proxySegments
-        ? `/api/proxy/stream/${channel.id}/`
-        : channel.upstreamBase,
+      baseUrl: proxySegments ? `/api/proxy/stream/${channel.id}/` : channel.upstreamBase,
       keyId: channel.keyId,
     });
 
@@ -83,10 +83,7 @@ async function resolve(
   const length = upstream.headers.get("content-length");
   if (length) headers.set("content-length", length);
 
-  return new Response(request.method === "HEAD" ? null : upstream.body, {
-    status: 200,
-    headers,
-  });
+  return new Response(request.method === "HEAD" ? null : upstream.body, { status: 200, headers });
 }
 
 export async function GET(
