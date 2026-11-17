@@ -2,18 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Maximize2,
-  Minimize2,
-  RotateCw,
-  Star,
-  Volume1,
-  Volume2,
-  VolumeX,
-  ZoomIn,
-  ZoomOut,
+  Maximize2, Minimize2, RotateCw, Star, Volume1, Volume2, VolumeX, ZoomIn, ZoomOut,
 } from "lucide-react";
 import type { Channel } from "@/lib/channels";
-import { installFilters, loadShaka } from "@/lib/player";
+import { installFilters, loadShaka, type FilterContext } from "@/lib/player";
 import LiveClock from "./LiveClock";
 
 type Quality = "1080p" | "720p" | "auto";
@@ -32,23 +24,14 @@ type Props = {
   onQualityChange: (quality: Quality) => void;
 };
 
-const MAX_AUTO_RETRIES = 6;
+const MAX_AUTO_RETRIES = 8;
 
-const qualityLabel = (quality: Quality): string =>
-  quality === "1080p" ? "1080p FHD" : quality === "720p" ? "720p HD" : "AUTO";
+const qualityLabel = (q: Quality): string =>
+  q === "1080p" ? "1080p FHD" : q === "720p" ? "720p HD" : "AUTO";
 
 export default function CameraCard({
-  channel,
-  isSoundOn,
-  onToggleSound,
-  isFeatured,
-  onSetFeatured,
-  canFeature,
-  fitMode,
-  isSingleView,
-  isIdle,
-  qualityPreference,
-  onQualityChange,
+  channel, isSoundOn, onToggleSound, isFeatured, onSetFeatured, canFeature,
+  fitMode, isSingleView, isIdle, qualityPreference, onQualityChange,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -59,7 +42,7 @@ export default function CameraCard({
   const [status, setStatus] = useState<"loading" | "live" | "error">("loading");
   const [message, setMessage] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const [proxyMode, setProxyMode] = useState(false);
+  const [proxyFirst, setProxyFirst] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [volumeOpen, setVolumeOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -71,34 +54,29 @@ export default function CameraCard({
   const soundRef = useRef(isSoundOn);
   const volumeRef = useRef(volume);
   const qualityRef = useRef(qualityPreference);
-  const proxyRef = useRef(proxyMode);
+  const proxyRef = useRef(proxyFirst);
 
   soundRef.current = isSoundOn;
   volumeRef.current = volume;
   qualityRef.current = qualityPreference;
-  proxyRef.current = proxyMode;
+  proxyRef.current = proxyFirst;
 
   const scheduleRetry = useCallback(() => {
     if (retryTimer.current) clearTimeout(retryTimer.current);
-
     if (autoRetries.current >= MAX_AUTO_RETRIES) {
       setStatus("error");
       setMessage("Feed unavailable. Tap retry.");
       return;
     }
-
-    const delay = Math.min(10000, 700 * Math.pow(1.9, autoRetries.current));
+    const delay = Math.min(10000, 600 * Math.pow(1.8, autoRetries.current));
     autoRetries.current += 1;
     setStatus("loading");
     setMessage(`Reconnecting (${autoRetries.current}/${MAX_AUTO_RETRIES})…`);
-
-    retryTimer.current = setTimeout(() => setAttempt((value) => value + 1), delay);
+    retryTimer.current = setTimeout(() => setAttempt((v) => v + 1), delay);
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (retryTimer.current) clearTimeout(retryTimer.current);
-    };
+  useEffect(() => () => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
   }, []);
 
   useEffect(() => {
@@ -140,27 +118,20 @@ export default function CameraCard({
 
         player.addEventListener("error", (event: any) => {
           if (disposed) return;
-
           const detail = event?.detail;
           if (detail?.severity && detail.severity !== 2) return;
 
           const code = detail?.code;
-          const httpStatus = detail?.data?.[1];
+          const http = detail?.data?.[1];
 
-          if ((code === 1001 || code === 1002) && (httpStatus === 403 || httpStatus === 401)) {
+          if ((code === 1001 || code === 1002) && (http === 403 || http === 401)) {
             if (!proxyRef.current) {
-              setProxyMode(true);
+              setProxyFirst(true);
               return;
             }
             scheduleRetry();
             return;
           }
-
-          if (code === 4012 || code === 3015) {
-            scheduleRetry();
-            return;
-          }
-
           scheduleRetry();
         });
 
@@ -169,7 +140,6 @@ export default function CameraCard({
           autoRetries.current = 0;
           setStatus("live");
         };
-
         video.onplaying = markLive;
         video.onloadeddata = markLive;
         video.ontimeupdate = () => {
@@ -177,12 +147,10 @@ export default function CameraCard({
           if (video.currentTime > 0) markLive();
         };
 
-        const res = await fetch(
-          `/api/stream?channel=${encodeURIComponent(channel.id)}&proxy=${proxyRef.current ? 1 : 0}`,
-          { cache: "no-store" }
-        );
+        const res = await fetch(`/api/stream?channel=${encodeURIComponent(channel.id)}`, {
+          cache: "no-store",
+        });
         if (!res.ok) throw new Error(`API ${res.status}`);
-
         const info: any = await res.json();
         if (disposed) return;
 
@@ -218,24 +186,23 @@ export default function CameraCard({
           },
         });
 
-        installFilters(player, shaka, info);
+        const ctx: FilterContext = { baseUrl: info.upstreamBase, keyId: info.keyId };
+        installFilters(player, shaka, ctx);
 
         const applyTrack = () => {
           try {
             const tracks = player
               .getVariantTracks()
-              .filter((track: any) => track.type === "video" || track.height);
+              .filter((t: any) => t.type === "video" || t.height);
             if (!tracks.length) return;
-
             const cap = qualityRef.current === "720p" ? 720 : 1080;
             const chosen = tracks
-              .filter((track: any) => !track.height || track.height <= cap)
+              .filter((t: any) => !t.height || t.height <= cap)
               .sort(
                 (a: any, b: any) =>
                   (b.height || 0) - (a.height || 0) || (b.bandwidth || 0) - (a.bandwidth || 0)
               )[0];
             if (!chosen) return;
-
             player.selectVariantTrack(chosen, false);
             if (chosen.height) {
               setTrackLabel(
@@ -247,25 +214,33 @@ export default function CameraCard({
           }
         };
 
-        let loaded = false;
-        const candidates = Array.from(
-          new Set([info?.manifestUri, info?.proxiedManifestUri].filter(Boolean))
-        );
+        // Three escalating routes. The browser-direct one is preferred because
+        // Akamai trusts a real client far more than a datacenter.
+        const plans = [
+          { uri: info.directManifestUri, base: info.upstreamBase },
+          { uri: info.manifestUri, base: info.upstreamBase },
+          { uri: info.proxiedManifestUri, base: info.proxyBase },
+        ].filter((p) => Boolean(p.uri));
 
-        for (const uri of candidates) {
+        if (proxyRef.current) plans.push(plans.shift() as (typeof plans)[number]);
+
+        let loaded = false;
+        for (const plan of plans) {
+          if (loaded || disposed) break;
+          ctx.baseUrl = plan.base as string;
+
           for (let i = 0; i < 2 && !loaded; i++) {
             try {
-              await player.load(uri as string);
+              await player.load(plan.uri as string);
               loaded = true;
             } catch {
               if (disposed) return;
               await new Promise((r) => setTimeout(r, 700));
             }
           }
-          if (loaded) break;
         }
 
-        if (!loaded) throw new Error("Connection interrupted");
+        if (!loaded) throw new Error("All routes refused");
         if (disposed) return;
 
         applyTrack();
@@ -283,23 +258,20 @@ export default function CameraCard({
           }
         };
 
-        if (video) {
-          video.muted = !soundRef.current;
-          if (soundRef.current) video.volume = volumeRef.current > 0 ? volumeRef.current : 1;
-          try {
-            await video.play();
-          } catch {
-            video.muted = true;
-            await video.play().catch(() => undefined);
-          }
+        video.muted = !soundRef.current;
+        if (soundRef.current) video.volume = volumeRef.current > 0 ? volumeRef.current : 1;
+        try {
+          await video.play();
+        } catch {
+          video.muted = true;
+          await video.play().catch(() => undefined);
         }
 
         setTimeout(seekLive, 1200);
         lastProgress = Date.now();
 
         watchdog = setInterval(() => {
-          if (disposed || !video || document.visibilityState !== "visible") return;
-
+          if (disposed || document.visibilityState !== "visible") return;
           try {
             const range = player.seekRange?.();
             if (range && isFinite(range.end) && range.end - video.currentTime > 20) {
@@ -309,10 +281,7 @@ export default function CameraCard({
           } catch {
             /* ignore */
           }
-
           if (video.paused) video.play().catch(() => undefined);
-
-          // Nothing buffered for 12s -> rebuild the pipeline.
           if (Date.now() - lastProgress > 12000) {
             lastProgress = Date.now();
             scheduleRetry();
@@ -338,12 +307,11 @@ export default function CameraCard({
         /* ignore */
       }
     };
-  }, [channel.id, proxyMode, attempt, scheduleRetry]);
+  }, [channel.id, proxyFirst, attempt, scheduleRetry]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-
     const apply = () => {
       video.muted = !isSoundOn;
       if (isSoundOn) {
@@ -351,7 +319,6 @@ export default function CameraCard({
         video.play().catch(() => undefined);
       }
     };
-
     apply();
     video.addEventListener("canplay", apply);
     video.addEventListener("playing", apply);
@@ -364,23 +331,19 @@ export default function CameraCard({
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
-
     try {
       const tracks = player
         .getVariantTracks()
-        .filter((track: any) => track.type === "video" || track.height);
+        .filter((t: any) => t.type === "video" || t.height);
       if (!tracks.length) return;
-
       if (qualityPreference === "auto") {
         player.configure({ abr: { enabled: true, restrictions: { maxHeight: 1080, minHeight: 0 } } });
         return;
       }
-
       const cap = qualityPreference === "720p" ? 720 : 1080;
       const chosen = tracks
-        .filter((track: any) => !track.height || track.height <= cap)
+        .filter((t: any) => !t.height || t.height <= cap)
         .sort((a: any, b: any) => (b.height || 0) - (a.height || 0))[0];
-
       if (chosen) {
         player.selectVariantTrack(chosen, false);
         player.configure({ abr: { enabled: false, restrictions: { maxHeight: cap, minHeight: 0 } } });
@@ -393,17 +356,14 @@ export default function CameraCard({
   const applyVolume = (value: number) => {
     const next = Math.max(0, Math.min(1, value));
     setVolume(next);
-
     try {
       localStorage.setItem(`pbb-player-volume-${channel.id}`, String(next));
       localStorage.setItem("pbb-player-volume", String(next));
     } catch {
       /* ignore */
     }
-
     const video = videoRef.current;
     if (!video) return;
-
     video.volume = next;
     if (next > 0) {
       video.muted = false;
@@ -416,13 +376,11 @@ export default function CameraCard({
 
   const toggleMute = () => {
     const video = videoRef.current;
-
     if (isSoundOn && volume > 0) {
       if (video) video.muted = true;
       onToggleSound(channel.id);
       return;
     }
-
     const next = volume > 0 ? volume : 1;
     setVolume(next);
     if (video) {
@@ -442,18 +400,16 @@ export default function CameraCard({
     } catch {
       /* ignore */
     }
-    setAttempt((value) => value + 1);
+    setAttempt((v) => v + 1);
   };
 
   const toggleFullscreen = async () => {
     const node = wrapRef.current;
     if (!node) return;
-
     if (document.fullscreenElement === node) {
       await document.exitFullscreen().catch(() => undefined);
       return;
     }
-
     try {
       await node.requestFullscreen();
     } catch {
@@ -467,9 +423,9 @@ export default function CameraCard({
     if (!rect) return;
     const maxX = (rect.width * (nextScale - 1)) / 2;
     const maxY = (rect.height * (nextScale - 1)) / 2;
-    setOffset((current) => ({
-      x: Math.max(-maxX, Math.min(maxX, current.x)),
-      y: Math.max(-maxY, Math.min(maxY, current.y)),
+    setOffset((c) => ({
+      x: Math.max(-maxX, Math.min(maxX, c.x)),
+      y: Math.max(-maxY, Math.min(maxY, c.y)),
     }));
   };
 
@@ -477,17 +433,14 @@ export default function CameraCard({
     event.preventDefault();
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect) return;
-
     const px = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     const py = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
     const next = Math.min(4, Math.max(1, Number((scale + (event.deltaY < 0 ? 0.35 : -0.35)).toFixed(2))));
-
     if (next === 1) {
       setScale(1);
       setOffset({ x: 0, y: 0 });
       return;
     }
-
     setScale(next);
     setOffset({ x: (0.5 - px) * rect.width * (next - 1), y: (0.5 - py) * rect.height * (next - 1) });
     clampOffset(next);
@@ -496,19 +449,15 @@ export default function CameraCard({
   const onDoubleClick = (event: React.MouseEvent<HTMLVideoElement>) => {
     if ((event.target as HTMLElement).closest('button, input, [role="button"]')) return;
     event.preventDefault();
-
     if (scale > 1) {
       setScale(1);
       setOffset({ x: 0, y: 0 });
       return;
     }
-
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect) return;
-
     const px = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     const py = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
-
     setScale(2.2);
     setOffset({ x: (0.5 - px) * rect.width * 1.2, y: (0.5 - py) * rect.height * 1.2 });
   };
@@ -519,24 +468,19 @@ export default function CameraCard({
   const onPointerDown = (event: React.PointerEvent<HTMLVideoElement>) => {
     if (scale <= 1) return;
     if ((event.target as HTMLElement).closest('button, input, [role="button"]')) return;
-
     setDragging(true);
     dragStart.current = { x: event.clientX, y: event.clientY };
     dragOrigin.current = { ...offset };
-
     const node = event.currentTarget as HTMLElement;
     if (node.setPointerCapture) node.setPointerCapture(event.pointerId);
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLVideoElement>) => {
     if (!dragging || scale <= 1) return;
-
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect) return;
-
     const maxX = (rect.width * (scale - 1)) / 2;
     const maxY = (rect.height * (scale - 1)) / 2;
-
     setOffset({
       x: Math.max(-maxX, Math.min(maxX, dragOrigin.current.x + (event.clientX - dragStart.current.x))),
       y: Math.max(-maxY, Math.min(maxY, dragOrigin.current.y + (event.clientY - dragStart.current.y))),
@@ -544,15 +488,12 @@ export default function CameraCard({
   };
 
   const endDrag = () => setDragging(false);
-
   const hidden = Boolean(isIdle) && !volumeOpen;
 
   return (
     <div
       ref={wrapRef}
-      className={`relative w-full h-full bg-black overflow-hidden group select-none flex items-center justify-center ${
-        hidden ? "cursor-none" : ""
-      }`}
+      className={`relative w-full h-full bg-black overflow-hidden group select-none flex items-center justify-center ${hidden ? "cursor-none" : ""}`}
     >
       <video
         ref={videoRef}
@@ -570,9 +511,9 @@ export default function CameraCard({
           transformOrigin: "center center",
           transition: dragging ? "none" : "transform 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
         }}
-        className={`w-full h-full ${
-          scale > 1 ? (dragging ? "cursor-grabbing touch-none" : "cursor-grab touch-none") : ""
-        } ${fitMode === "contain" ? "object-contain" : "object-cover"}`}
+        className={`w-full h-full ${scale > 1 ? (dragging ? "cursor-grabbing touch-none" : "cursor-grab touch-none") : ""} ${
+          fitMode === "contain" ? "object-contain" : "object-cover"
+        }`}
       />
 
       <div
@@ -581,11 +522,7 @@ export default function CameraCard({
         }`}
       >
         <div className="flex items-center gap-1.5">
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              status === "live" ? "bg-emerald-400 animate-pulse" : "bg-white animate-pulse"
-            }`}
-          />
+          <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${status === "live" ? "bg-emerald-400" : "bg-white"}`} />
           <span className="text-[10px] sm:text-xs font-medium tracking-wider text-white uppercase">
             {channel.name}
           </span>
@@ -619,53 +556,39 @@ export default function CameraCard({
           >
             <button
               type="button"
-              onClick={(event) => {
-                event.stopPropagation();
+              onClick={(e) => {
+                e.stopPropagation();
                 toggleMute();
               }}
               className="p-1 rounded-full text-zinc-300 hover:text-white transition-colors flex items-center justify-center shrink-0 active:scale-95"
               title={isSoundOn ? "Mute" : "Unmute"}
             >
               {isSoundOn && volume > 0 ? (
-                volume <= 0.5 ? (
-                  <Volume1 className="w-3.5 h-3.5 text-amber-400" />
-                ) : (
-                  <Volume2 className="w-3.5 h-3.5 text-white" />
-                )
+                volume <= 0.5 ? <Volume1 className="w-3.5 h-3.5 text-amber-400" /> : <Volume2 className="w-3.5 h-3.5 text-white" />
               ) : (
                 <VolumeX className="w-3.5 h-3.5 text-zinc-400" />
               )}
             </button>
 
-            <div
-              className={`flex items-center gap-2 transition-all duration-200 overflow-hidden ${
-                volumeOpen ? "max-w-[150px] opacity-100 pr-1" : "max-w-0 opacity-0"
-              }`}
-            >
+            <div className={`flex items-center gap-2 transition-all duration-200 overflow-hidden ${volumeOpen ? "max-w-[150px] opacity-100 pr-1" : "max-w-0 opacity-0"}`}>
               <div className="relative w-18 sm:w-22 h-5 flex items-center">
                 <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden relative border border-zinc-700/60">
                   <div
-                    className={`h-full rounded-full ${
-                      !isSoundOn || volume === 0 ? "bg-zinc-600" : volume <= 0.5 ? "bg-amber-400" : "bg-white"
-                    }`}
+                    className={`h-full rounded-full ${!isSoundOn || volume === 0 ? "bg-zinc-600" : volume <= 0.5 ? "bg-amber-400" : "bg-white"}`}
                     style={{ width: `${Math.round((isSoundOn ? volume : 0) * 100)}%` }}
                   />
                 </div>
                 <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={isSoundOn ? volume : 0}
-                  onChange={(event) => applyVolume(parseFloat(event.target.value))}
+                  type="range" min="0" max="1" step="0.01" value={isSoundOn ? volume : 0}
+                  onChange={(e) => applyVolume(parseFloat(e.target.value))}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                   aria-label="Volume Slider"
                 />
               </div>
               <button
                 type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
+                onClick={(e) => {
+                  e.stopPropagation();
                   applyVolume(volume >= 1 ? 0.5 : 1);
                 }}
                 className="text-[9px] text-zinc-300 hover:text-white tabular-nums min-w-[26px] text-right font-medium cursor-pointer"
@@ -680,9 +603,9 @@ export default function CameraCard({
               <button
                 type="button"
                 onClick={() => {
-                  const next = Math.max(1, scale - 0.5);
-                  setScale(next);
-                  clampOffset(next);
+                  const n = Math.max(1, scale - 0.5);
+                  setScale(n);
+                  clampOffset(n);
                 }}
                 disabled={scale <= 1}
                 className={`p-1 rounded ${scale <= 1 ? "text-zinc-600" : "text-zinc-300 hover:text-white hover:bg-zinc-800"}`}
@@ -693,9 +616,9 @@ export default function CameraCard({
               <button
                 type="button"
                 onClick={() => {
-                  const next = Math.min(4, scale + 0.5);
-                  setScale(next);
-                  clampOffset(next);
+                  const n = Math.min(4, scale + 0.5);
+                  setScale(n);
+                  clampOffset(n);
                 }}
                 disabled={scale >= 4}
                 className={`p-1 rounded ${scale >= 4 ? "text-zinc-600" : "text-zinc-300 hover:text-white hover:bg-zinc-800"}`}
@@ -725,8 +648,8 @@ export default function CameraCard({
         <LiveClock />
         <button
           type="button"
-          onClick={(event) => {
-            event.stopPropagation();
+          onClick={(e) => {
+            e.stopPropagation();
             onQualityChange(
               qualityPreference === "1080p" ? "720p" : qualityPreference === "720p" ? "auto" : "1080p"
             );
@@ -736,11 +659,7 @@ export default function CameraCard({
         >
           <span
             className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-              qualityPreference === "1080p"
-                ? "bg-emerald-400"
-                : qualityPreference === "720p"
-                  ? "bg-cyan-400"
-                  : "bg-amber-400 animate-pulse"
+              qualityPreference === "1080p" ? "bg-emerald-400" : qualityPreference === "720p" ? "bg-cyan-400" : "bg-amber-400 animate-pulse"
             }`}
           />
           <span className="font-semibold text-white tracking-wider">{trackLabel}</span>
