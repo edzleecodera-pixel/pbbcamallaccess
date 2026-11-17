@@ -21,19 +21,18 @@ export function toU8(input: any): Uint8Array {
   return new Uint8Array(0);
 }
 
-function boxType(data: Uint8Array, offset: number): string {
-  return String.fromCharCode(data[offset], data[offset + 1], data[offset + 2], data[offset + 3]);
-}
+const boxType = (data: Uint8Array, offset: number): string =>
+  String.fromCharCode(data[offset], data[offset + 1], data[offset + 2], data[offset + 3]);
 
-function setBoxType(data: Uint8Array, offset: number, value: string): void {
+const setBoxType = (data: Uint8Array, offset: number, value: string): void => {
   for (let i = 0; i < 4; i++) data[offset + i] = value.charCodeAt(i);
-}
+};
 
-function hexToBytes(hex: string): Uint8Array {
+const hexToBytes = (hex: string): Uint8Array => {
   const out = new Uint8Array(16);
   for (let i = 0; i < 16; i++) out[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
   return out;
-}
+};
 
 export function patchInitSegment(data: Uint8Array, keyId: string): void {
   const hex = normHex(keyId);
@@ -143,8 +142,6 @@ export function installFilters(player: any, shaka: any, info: any): void {
   engine.registerResponseFilter((requestType: any, response: any) => {
     if (!response || !response.data) return;
 
-    // Server already patched this manifest; re-apply so refreshes stay correct
-    // even if the proxy body is served from a cache layer.
     if (requestType === RequestType.MANIFEST) {
       try {
         const text = new TextDecoder().decode(toU8(response.data));
@@ -163,7 +160,7 @@ export function installFilters(player: any, shaka: any, info: any): void {
       try {
         const bytes = toU8(response.data);
         const uri = String(response.uri || response.originalUri || "");
-        if (uri.indexOf("_init.mp4") !== -1) patchSegmentInit(bytes, info.keyId);
+        if (uri.indexOf("_init.mp4") !== -1) patchInitSegment(bytes, info.keyId);
         else patchMediaSegment(bytes);
         response.data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       } catch {
@@ -171,8 +168,4 @@ export function installFilters(player: any, shaka: any, info: any): void {
       }
     }
   });
-}
-
-function patchSegmentInit(bytes: Uint8Array, keyId: string): void {
-  patchInitSegment(bytes, keyId);
 }
