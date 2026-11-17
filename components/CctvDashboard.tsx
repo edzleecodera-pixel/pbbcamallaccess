@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Armchair, Columns2, Grid2x2, LayoutGrid, LayoutTemplate, Rows3, Tv, Utensils,
-} from "lucide-react";
+import { Armchair, Columns2, Grid2x2, LayoutGrid, LayoutTemplate, Rows3, Tv, Utensils } from "lucide-react";
 import { CHANNELS } from "@/lib/channels";
 import AnnouncementBanner from "./AnnouncementBanner";
 import CameraCard from "./CameraCard";
@@ -74,17 +72,12 @@ export default function CctvDashboard() {
     }
 
     const storedLayout = localStorage.getItem("pbb-cctv-layout");
-    if (
-      storedLayout &&
-      ["featured-top", "featured-side", "equal-cols", "grid-4", "single"].includes(storedLayout)
-    ) {
+    if (storedLayout && ["featured-top", "featured-side", "equal-cols", "grid-4", "single"].includes(storedLayout)) {
       setLayout(storedLayout as Layout);
     }
 
     const storedQuality = localStorage.getItem("pbb_stream_quality");
-    if (storedQuality === "1080p" || storedQuality === "720p" || storedQuality === "auto") {
-      setQuality(storedQuality);
-    }
+    if (storedQuality === "1080p" || storedQuality === "720p" || storedQuality === "auto") setQuality(storedQuality);
 
     const timer = setTimeout(() => {
       const top = Number(localStorage.getItem("pbb-split-top"));
@@ -113,8 +106,7 @@ export default function CctvDashboard() {
   };
 
   const startDrag =
-    (axis: "y" | "x" | "sideWidth" | "sideStack") =>
-    (event: React.PointerEvent<HTMLDivElement>) => {
+    (axis: "y" | "x" | "sideWidth" | "sideStack") => (event: React.PointerEvent<HTMLDivElement>) => {
       event.preventDefault();
       setMoving(true);
 
@@ -130,15 +122,10 @@ export default function CctvDashboard() {
           const rect = boxRef.current?.getBoundingClientRect();
           if (!rect) return;
 
-          if (axis === "y") {
-            setTopSplit(Math.min(85, Math.max(15, ((moveEvent.clientY - rect.top) / rect.height) * 100)));
-          } else if (axis === "x") {
-            setBottomSplit(Math.min(85, Math.max(15, ((moveEvent.clientX - rect.left) / rect.width) * 100)));
-          } else if (axis === "sideWidth") {
-            setSideWidth(Math.min(85, Math.max(20, ((moveEvent.clientX - rect.left) / rect.width) * 100)));
-          } else {
-            setSideStack(Math.min(85, Math.max(15, ((moveEvent.clientY - rect.top) / rect.height) * 100)));
-          }
+          if (axis === "y") setTopSplit(Math.min(85, Math.max(15, ((moveEvent.clientY - rect.top) / rect.height) * 100)));
+          else if (axis === "x") setBottomSplit(Math.min(85, Math.max(15, ((moveEvent.clientX - rect.left) / rect.width) * 100)));
+          else if (axis === "sideWidth") setSideWidth(Math.min(85, Math.max(20, ((moveEvent.clientX - rect.left) / rect.width) * 100)));
+          else setSideStack(Math.min(85, Math.max(15, ((moveEvent.clientY - rect.top) / rect.height) * 100)));
         });
       };
 
@@ -152,15 +139,10 @@ export default function CctvDashboard() {
         const rect = boxRef.current?.getBoundingClientRect();
         if (!rect) return;
 
-        if (axis === "y") {
-          localStorage.setItem("pbb-split-top", String(Math.round(((upEvent.clientY - rect.top) / rect.height) * 100)));
-        } else if (axis === "x") {
-          localStorage.setItem("pbb-split-bottom", String(Math.round(((upEvent.clientX - rect.left) / rect.width) * 100)));
-        } else if (axis === "sideWidth") {
-          localStorage.setItem("pbb-split-side", String(Math.round(((upEvent.clientX - rect.left) / rect.width) * 100)));
-        } else {
-          localStorage.setItem("pbb-split-side-stacked", String(Math.round(((upEvent.clientY - rect.top) / rect.height) * 100)));
-        }
+        if (axis === "y") localStorage.setItem("pbb-split-top", String(Math.round(((upEvent.clientY - rect.top) / rect.height) * 100)));
+        else if (axis === "x") localStorage.setItem("pbb-split-bottom", String(Math.round(((upEvent.clientX - rect.left) / rect.width) * 100)));
+        else if (axis === "sideWidth") localStorage.setItem("pbb-split-side", String(Math.round(((upEvent.clientX - rect.left) / rect.width) * 100)));
+        else localStorage.setItem("pbb-split-side-stacked", String(Math.round(((upEvent.clientY - rect.top) / rect.height) * 100)));
       };
 
       window.addEventListener("pointermove", move);
@@ -172,15 +154,11 @@ export default function CctvDashboard() {
     setBottomSplit(50);
     setSideWidth(66);
     setSideStack(50);
-    ["pbb-split-top", "pbb-split-bottom", "pbb-split-side", "pbb-split-side-stacked"].forEach((k) =>
-      localStorage.removeItem(k)
-    );
+    ["pbb-split-top", "pbb-split-bottom", "pbb-split-side", "pbb-split-side-stacked"].forEach((k) => localStorage.removeItem(k));
   };
 
   const toggleSound = useCallback((id: string) => {
-    setUnmuted((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
-    );
+    setUnmuted((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
   }, []);
 
   const changeQuality = (next: Quality) => {
@@ -199,53 +177,25 @@ export default function CctvDashboard() {
     if (layout === "single") {
       return isLead
         ? { position: "absolute", inset: 0, zIndex: 10, transition: "opacity 0.2s ease-in-out" }
-        : {
-            position: "absolute",
-            inset: 0,
-            zIndex: 0,
-            opacity: 0,
-            visibility: "hidden",
-            pointerEvents: "none",
-            transition: "opacity 0.2s ease-in-out",
-          };
+        : { position: "absolute", inset: 0, zIndex: 0, opacity: 0, visibility: "hidden", pointerEvents: "none", transition: "opacity 0.2s ease-in-out" };
     }
 
     if (layout === "featured-top") {
-      if (isLead) {
-        return { position: "absolute", top: 0, left: 0, width: "100%", height: `${topSplit}%`, zIndex: 2, transition };
-      }
+      if (isLead) return { position: "absolute", top: 0, left: 0, width: "100%", height: `${topSplit}%`, zIndex: 2, transition };
       const y = `calc(${topSplit}% + 6px)`;
       const height = `calc(${100 - topSplit}% - 6px)`;
       return restIndex === 0
         ? { position: "absolute", top: y, left: 0, width: `${bottomSplit}%`, height, zIndex: 2, transition }
-        : {
-            position: "absolute",
-            top: y,
-            left: `calc(${bottomSplit}% + 6px)`,
-            width: `calc(${100 - bottomSplit}% - 6px)`,
-            height,
-            zIndex: 2,
-            transition,
-          };
+        : { position: "absolute", top: y, left: `calc(${bottomSplit}% + 6px)`, width: `calc(${100 - bottomSplit}% - 6px)`, height, zIndex: 2, transition };
     }
 
     if (layout === "featured-side") {
-      if (isLead) {
-        return { position: "absolute", top: 0, left: 0, width: `${sideWidth}%`, height: "100%", zIndex: 2, transition };
-      }
+      if (isLead) return { position: "absolute", top: 0, left: 0, width: `${sideWidth}%`, height: "100%", zIndex: 2, transition };
       const x = `calc(${sideWidth}% + 6px)`;
       const width = `calc(${100 - sideWidth}% - 6px)`;
       return restIndex === 0
         ? { position: "absolute", top: 0, left: x, width, height: `${sideStack}%`, zIndex: 2, transition }
-        : {
-            position: "absolute",
-            top: `calc(${sideStack}% + 6px)`,
-            left: x,
-            width,
-            height: `calc(${100 - sideStack}% - 6px)`,
-            zIndex: 2,
-            transition,
-          };
+        : { position: "absolute", top: `calc(${sideStack}% + 6px)`, left: x, width, height: `calc(${100 - sideStack}% - 6px)`, zIndex: 2, transition };
     }
 
     if (layout === "grid-4") {
@@ -284,11 +234,7 @@ export default function CctvDashboard() {
   };
 
   return (
-    <div
-      className={`w-full h-[100dvh] bg-black text-zinc-100 flex flex-col overflow-hidden transition-all duration-300 ${
-        idle ? "cursor-none" : ""
-      }`}
-    >
+    <div className={`w-full h-[100dvh] bg-black text-zinc-100 flex flex-col overflow-hidden transition-all duration-300 ${idle ? "cursor-none" : ""}`}>
       <div
         className={`sticky top-0 z-40 bg-black transition-all duration-500 ease-in-out shrink-0 overflow-hidden ${
           idle ? "max-h-0 opacity-0 pointer-events-none -translate-y-full" : "max-h-32 opacity-100 translate-y-0"
@@ -302,9 +248,7 @@ export default function CctvDashboard() {
             localStorage.setItem("pbb-cctv-fit", next);
           }}
           unmutedCount={unmuted.length}
-          onToggleAllAudio={() =>
-            setUnmuted(unmuted.length > 0 ? [] : CHANNELS.map((channel) => channel.id))
-          }
+          onToggleAllAudio={() => setUnmuted(unmuted.length > 0 ? [] : CHANNELS.map((channel) => channel.id))}
           onOpenSupport={() => setSupportOpen(true)}
         />
         <AnnouncementBanner />
@@ -335,14 +279,7 @@ export default function CctvDashboard() {
 
           {layout === "grid-4" ? (
             <div
-              style={{
-                position: "absolute",
-                top: "calc(50% + 2px)",
-                left: "calc(50% + 2px)",
-                width: "calc(50% - 2px)",
-                height: "calc(50% - 2px)",
-                zIndex: 2,
-              }}
+              style={{ position: "absolute", top: "calc(50% + 2px)", left: "calc(50% + 2px)", width: "calc(50% - 2px)", height: "calc(50% - 2px)", zIndex: 2 }}
               className="overflow-hidden bg-zinc-950/90 border border-zinc-900/80 flex flex-col items-center justify-center relative"
             >
               <div className="absolute top-2 left-2.5 flex items-center gap-1.5 text-[9px] text-zinc-500">
@@ -377,14 +314,7 @@ export default function CctvDashboard() {
               <div
                 onPointerDown={startDrag("x")}
                 onDoubleClick={resetSplits}
-                style={{
-                  position: "absolute",
-                  top: `calc(${topSplit}% + 6px)`,
-                  left: `${bottomSplit}%`,
-                  width: 6,
-                  height: `calc(${100 - topSplit}% - 6px)`,
-                  zIndex: 20,
-                }}
+                style={{ position: "absolute", top: `calc(${topSplit}% + 6px)`, left: `${bottomSplit}%`, width: 6, height: `calc(${100 - topSplit}% - 6px)`, zIndex: 20 }}
                 className={`bg-zinc-950 hover:bg-zinc-700 cursor-col-resize flex items-center justify-center group touch-none ${idle ? "opacity-0" : ""}`}
                 title="Drag left/right to resize bottom feeds (Double-click to reset)"
               >
@@ -407,14 +337,7 @@ export default function CctvDashboard() {
               <div
                 onPointerDown={startDrag("sideStack")}
                 onDoubleClick={resetSplits}
-                style={{
-                  position: "absolute",
-                  top: `${sideStack}%`,
-                  left: `calc(${sideWidth}% + 6px)`,
-                  width: `calc(${100 - sideWidth}% - 6px)`,
-                  height: 6,
-                  zIndex: 20,
-                }}
+                style={{ position: "absolute", top: `${sideStack}%`, left: `calc(${sideWidth}% + 6px)`, width: `calc(${100 - sideWidth}% - 6px)`, height: 6, zIndex: 20 }}
                 className={`bg-zinc-950 hover:bg-zinc-700 cursor-row-resize flex items-center justify-center group touch-none ${idle ? "opacity-0" : ""}`}
                 title="Drag to resize right side feeds (Double-click to reset)"
               >
@@ -443,9 +366,7 @@ export default function CctvDashboard() {
                     setPickerOpen(false);
                   }}
                   title={option.title}
-                  className={`p-2 rounded-full ${
-                    layout === option.id ? "bg-white text-black" : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-                  }`}
+                  className={`p-2 rounded-full ${layout === option.id ? "bg-white text-black" : "text-zinc-400 hover:text-white hover:bg-zinc-800"}`}
                 >
                   <Icon className="w-3.5 h-3.5" />
                 </button>
@@ -468,9 +389,7 @@ export default function CctvDashboard() {
                   saveLayout("single");
                 }}
                 title={camera.title}
-                className={`p-2 sm:p-2.5 rounded-full ${
-                  active ? "bg-white text-black shadow-md" : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-                }`}
+                className={`p-2 sm:p-2.5 rounded-full ${active ? "bg-white text-black shadow-md" : "text-zinc-400 hover:text-white hover:bg-zinc-800"}`}
               >
                 <Icon className="w-4 h-4" />
               </button>
@@ -488,14 +407,10 @@ export default function CctvDashboard() {
               }
             }}
             title="All Cameras (Click to change layout)"
-            className={`relative p-2 sm:p-2.5 rounded-full ${
-              layout !== "single" ? "bg-white text-black shadow-md" : "text-zinc-400 hover:text-white hover:bg-zinc-800"
-            }`}
+            className={`relative p-2 sm:p-2.5 rounded-full ${layout !== "single" ? "bg-white text-black shadow-md" : "text-zinc-400 hover:text-white hover:bg-zinc-800"}`}
           >
             <LayoutGrid className="w-4 h-4" />
-            {layout !== "single" ? (
-              <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            ) : null}
+            {layout !== "single" ? <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-500" /> : null}
           </button>
         </div>
       </div>
