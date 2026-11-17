@@ -42,10 +42,7 @@ export function extractDefaultKid(xml: string): string {
   return hex.length === 32 ? hex : "";
 }
 
-export function patchManifest(
-  xml: string,
-  opts: { baseUrl?: string; keyId?: string }
-): string {
+export function patchManifest(xml: string, opts: { baseUrl?: string; keyId?: string }): string {
   let out = String(xml || "");
 
   if (opts.baseUrl) {
@@ -65,10 +62,7 @@ export function patchManifest(
         /<ContentProtection[^>]*edef8ba9-79d6-4ace-a3c8-27dcd51d21ed[^>]*>[\s\S]*?<\/ContentProtection>/gi,
         ""
       )
-      .replace(
-        /<ContentProtection[^>]*edef8ba9-79d6-4ace-a3c8-27dcd51d21ed[^>]*\/>/gi,
-        ""
-      );
+      .replace(/<ContentProtection[^>]*edef8ba9-79d6-4ace-a3c8-27dcd51d21ed[^>]*\/>/gi, "");
 
     if (pssh && !/1077efec-c0b2-4d02-ace3-3c1e52e2fb4b/i.test(out)) {
       out = out.replace(
