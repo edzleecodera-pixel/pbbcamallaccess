@@ -32,11 +32,8 @@ type Props = {
   onQualityChange: (quality: Quality) => void;
 };
 
-const qualityLabel = (quality: Quality): string => {
-  if (quality === "1080p") return "1080p FHD";
-  if (quality === "720p") return "720p HD";
-  return "AUTO";
-};
+const qualityLabel = (quality: Quality): string =>
+  quality === "1080p" ? "1080p FHD" : quality === "720p" ? "720p HD" : "AUTO";
 
 export default function CameraCard({
   channel,
@@ -70,23 +67,22 @@ export default function CameraCard({
   const soundRef = useRef(isSoundOn);
   const volumeRef = useRef(volume);
   const qualityRef = useRef(qualityPreference);
+  const proxyRef = useRef(proxyMode);
 
   soundRef.current = isSoundOn;
   volumeRef.current = volume;
   qualityRef.current = qualityPreference;
+  proxyRef.current = proxyMode;
 
   useEffect(() => {
-    const sync = () =>
-      setIsFullscreen(document.fullscreenElement === wrapRef.current);
+    const sync = () => setIsFullscreen(document.fullscreenElement === wrapRef.current);
     document.addEventListener("fullscreenchange", sync);
     return () => document.removeEventListener("fullscreenchange", sync);
   }, []);
 
   useEffect(() => {
     try {
-      const stored = parseFloat(
-        localStorage.getItem(`pbb-player-volume-${channel.id}`) || "1"
-      );
+      const stored = parseFloat(localStorage.getItem(`pbb-player-volume-${channel.id}`) || "1");
       if (!Number.isNaN(stored) && stored >= 0 && stored <= 1) setVolume(stored);
     } catch {
       /* ignore */
@@ -96,12 +92,12 @@ export default function CameraCard({
   useEffect(() => {
     let disposed = false;
     let player: any = null;
+    let stalledWatch: ReturnType<typeof setInterval> | null = null;
 
     const boot = async () => {
       try {
         const shaka = await loadShaka();
         const video = videoRef.current;
-
         if (!video || disposed) return;
 
         if (!shaka.Player.isBrowserSupported()) {
@@ -123,11 +119,8 @@ export default function CameraCard({
           const code = detail?.code;
           const httpStatus = detail?.data?.[1];
 
-          if (
-            (code === 1001 || code === 1002) &&
-            (httpStatus === 403 || httpStatus === 401)
-          ) {
-            if (!proxyMode) {
+          if ((code === 1001 || code === 1002) && (httpStatus === 403 || httpStatus === 401)) {
+            if (!proxyRef.current) {
               setProxyMode(true);
               return;
             }
@@ -162,14 +155,13 @@ export default function CameraCard({
           if (video.currentTime > 0) setStatus("live");
         };
 
-        const response = await fetch(
-          `/api/stream?channel=${encodeURIComponent(channel.id)}&proxy=${
-            proxyMode ? 1 : 0
-          }`
+        const res = await fetch(
+          `/api/stream?channel=${encodeURIComponent(channel.id)}&proxy=${proxyRef.current ? 1 : 0}`,
+          { cache: "no-store" }
         );
-        if (!response.ok) throw new Error(`API ${response.status}`);
+        if (!res.ok) throw new Error(`API ${res.status}`);
 
-        const info: any = await response.json();
+        const info: any = await res.json();
         if (disposed) return;
 
         const clearKeys = info?.clearKeys;
@@ -190,16 +182,24 @@ export default function CameraCard({
             restrictions: { maxHeight: quality === "720p" ? 720 : 1080, minHeight: 0 },
           },
           streaming: {
-            bufferingGoal: 12,
-            rebufferingGoal: 1.5,
+            bufferingGoal: 16,
+            rebufferingGoal: 2,
             bufferBehind: 10,
-            retryParameters: { maxAttempts: 5, baseDelay: 300 },
-            stallEnabled: false,
+            lowLatencyMode: false,
+            retryParameters: { maxAttempts: 6, baseDelay: 400, backoffFactor: 2 },
+            stallEnabled: true,
+            stallThreshold: 1,
             safeSeekOffset: 12,
             inaccurateManifestTolerance: 0,
+            jumpLargeGaps: true,
           },
           manifest: {
-            dash: { autoCorrectDrift: true, defaultPresentationDelay: 12 },
+            dash: {
+              autoCorrectDrift: true,
+              defaultPresentationDelay: 12,
+              ignoreMinBufferTime: true,
+            },
+            retryParameters: { maxAttempts: 6, baseDelay: 400, backoffFactor: 2 },
           },
         });
 
@@ -213,14 +213,13 @@ export default function CameraCard({
             if (!tracks.length) return;
 
             const cap = qualityRef.current === "720p" ? 720 : 1080;
-            const sorted = tracks
+            const chosen = tracks
               .filter((track: any) => !track.height || track.height <= cap)
               .sort(
                 (a: any, b: any) =>
                   (b.height || 0) - (a.height || 0) ||
                   (b.bandwidth || 0) - (a.bandwidth || 0)
-              );
-            const chosen = sorted[0];
+              )[0];
             if (!chosen) return;
 
             player.selectVariantTrack(chosen, false);
@@ -239,18 +238,14 @@ export default function CameraCard({
         };
 
         let loaded = false;
-        const candidates = [info?.manifestUri, info?.proxiedManifestUri].filter(
-          Boolean
-        );
-
-        for (const uri of candidates) {
-          for (let tryIndex = 0; tryIndex < 2 && !loaded; tryIndex++) {
+        for (const uri of [info?.manifestUri, info?.proxiedManifestUri].filter(Boolean)) {
+          for (let i = 0; i < 2 && !loaded; i++) {
             try {
               await player.load(uri as string);
               loaded = true;
             } catch {
               if (disposed) return;
-              await new Promise((resolve) => setTimeout(resolve, 500));
+              await new Promise((r) => setTimeout(r, 600));
             }
           }
           if (loaded) break;
@@ -262,11 +257,29 @@ export default function CameraCard({
         applyTrack();
         player.addEventListener("variantchanged", applyTrack);
 
+        // Keep the playhead pinned to the live edge.
+        try {
+          player.setTextTrackVisibility?.(false);
+        } catch {
+          /* ignore */
+        }
+
+        const seekLive = () => {
+          try {
+            const range = player.seekRange();
+            if (!range || !isFinite(range.end)) return;
+            const target = Math.max(range.start, range.end - 4);
+            if (video.currentTime < range.end - 12 || video.currentTime > range.end) {
+              video.currentTime = target;
+            }
+          } catch {
+            /* ignore */
+          }
+        };
+
         if (video) {
           video.muted = !soundRef.current;
-          if (soundRef.current) {
-            video.volume = volumeRef.current > 0 ? volumeRef.current : 1;
-          }
+          if (soundRef.current) video.volume = volumeRef.current > 0 ? volumeRef.current : 1;
           try {
             await video.play();
           } catch {
@@ -274,6 +287,21 @@ export default function CameraCard({
             await video.play().catch(() => undefined);
           }
         }
+
+        setTimeout(seekLive, 1200);
+        stalledWatch = setInterval(() => {
+          if (disposed || !video) return;
+          if (document.visibilityState !== "visible") return;
+          try {
+            const range = player.seekRange?.();
+            if (range && isFinite(range.end) && range.end - video.currentTime > 20) {
+              video.currentTime = Math.max(range.start, range.end - 4);
+            }
+            if (video.paused) video.play().catch(() => undefined);
+          } catch {
+            /* ignore */
+          }
+        }, 10000);
 
         setStatus("live");
       } catch (error: any) {
@@ -287,6 +315,7 @@ export default function CameraCard({
 
     return () => {
       disposed = true;
+      if (stalledWatch) clearInterval(stalledWatch);
       try {
         player?.destroy?.();
       } catch {
@@ -327,9 +356,7 @@ export default function CameraCard({
       if (!tracks.length) return;
 
       if (qualityPreference === "auto") {
-        player.configure({
-          abr: { enabled: true, restrictions: { maxHeight: 1080, minHeight: 0 } },
-        });
+        player.configure({ abr: { enabled: true, restrictions: { maxHeight: 1080, minHeight: 0 } } });
         return;
       }
 
@@ -340,9 +367,7 @@ export default function CameraCard({
 
       if (chosen) {
         player.selectVariantTrack(chosen, false);
-        player.configure({
-          abr: { enabled: false, restrictions: { maxHeight: cap, minHeight: 0 } },
-        });
+        player.configure({ abr: { enabled: false, restrictions: { maxHeight: cap, minHeight: 0 } } });
       }
     } catch {
       /* ignore */
@@ -415,9 +440,7 @@ export default function CameraCard({
     try {
       await node.requestFullscreen();
     } catch {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen().catch(() => undefined);
-      }
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
       await node.requestFullscreen().catch(() => undefined);
     }
   };
@@ -425,10 +448,8 @@ export default function CameraCard({
   const clampOffset = (nextScale: number) => {
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect) return;
-
     const maxX = (rect.width * (nextScale - 1)) / 2;
     const maxY = (rect.height * (nextScale - 1)) / 2;
-
     setOffset((current) => ({
       x: Math.max(-maxX, Math.min(maxX, current.x)),
       y: Math.max(-maxY, Math.min(maxY, current.y)),
@@ -442,11 +463,7 @@ export default function CameraCard({
 
     const px = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     const py = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
-
-    const next = Math.min(
-      4,
-      Math.max(1, Number((scale + (event.deltaY < 0 ? 0.35 : -0.35)).toFixed(2)))
-    );
+    const next = Math.min(4, Math.max(1, Number((scale + (event.deltaY < 0 ? 0.35 : -0.35)).toFixed(2))));
 
     if (next === 1) {
       setScale(1);
@@ -455,17 +472,12 @@ export default function CameraCard({
     }
 
     setScale(next);
-    setOffset({
-      x: (0.5 - px) * rect.width * (next - 1),
-      y: (0.5 - py) * rect.height * (next - 1),
-    });
+    setOffset({ x: (0.5 - px) * rect.width * (next - 1), y: (0.5 - py) * rect.height * (next - 1) });
     clampOffset(next);
   };
 
   const onDoubleClick = (event: React.MouseEvent<HTMLVideoElement>) => {
-    if ((event.target as HTMLElement).closest('button, input, [role="button"]')) {
-      return;
-    }
+    if ((event.target as HTMLElement).closest('button, input, [role="button"]')) return;
     event.preventDefault();
 
     if (scale > 1) {
@@ -481,10 +493,7 @@ export default function CameraCard({
     const py = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
 
     setScale(2.2);
-    setOffset({
-      x: (0.5 - px) * rect.width * 1.2,
-      y: (0.5 - py) * rect.height * 1.2,
-    });
+    setOffset({ x: (0.5 - px) * rect.width * 1.2, y: (0.5 - py) * rect.height * 1.2 });
   };
 
   const dragStart = useRef({ x: 0, y: 0 });
@@ -492,9 +501,7 @@ export default function CameraCard({
 
   const onPointerDown = (event: React.PointerEvent<HTMLVideoElement>) => {
     if (scale <= 1) return;
-    if ((event.target as HTMLElement).closest('button, input, [role="button"]')) {
-      return;
-    }
+    if ((event.target as HTMLElement).closest('button, input, [role="button"]')) return;
 
     setDragging(true);
     dragStart.current = { x: event.clientX, y: event.clientY };
@@ -514,14 +521,8 @@ export default function CameraCard({
     const maxY = (rect.height * (scale - 1)) / 2;
 
     setOffset({
-      x: Math.max(
-        -maxX,
-        Math.min(maxX, dragOrigin.current.x + (event.clientX - dragStart.current.x))
-      ),
-      y: Math.max(
-        -maxY,
-        Math.min(maxY, dragOrigin.current.y + (event.clientY - dragStart.current.y))
-      ),
+      x: Math.max(-maxX, Math.min(maxX, dragOrigin.current.x + (event.clientX - dragStart.current.x))),
+      y: Math.max(-maxY, Math.min(maxY, dragOrigin.current.y + (event.clientY - dragStart.current.y))),
     });
   };
 
@@ -550,9 +551,7 @@ export default function CameraCard({
         style={{
           transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
           transformOrigin: "center center",
-          transition: dragging
-            ? "none"
-            : "transform 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+          transition: dragging ? "none" : "transform 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
         }}
         className={`w-full h-full ${
           scale > 1 ? (dragging ? "cursor-grabbing touch-none" : "cursor-grab touch-none") : ""
@@ -569,9 +568,7 @@ export default function CameraCard({
           <span className="text-[10px] sm:text-xs font-medium tracking-wider text-white uppercase">
             {channel.name}
           </span>
-          <span className="text-[9px] text-zinc-500 hidden sm:inline">
-            {channel.code}
-          </span>
+          <span className="text-[9px] text-zinc-500 hidden sm:inline">{channel.code}</span>
         </div>
 
         <div className="flex items-center gap-1 sm:gap-1.5 pointer-events-auto">
@@ -623,11 +620,7 @@ export default function CameraCard({
                 <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden relative border border-zinc-700/60">
                   <div
                     className={`h-full rounded-full ${
-                      !isSoundOn || volume === 0
-                        ? "bg-zinc-600"
-                        : volume <= 0.5
-                          ? "bg-amber-400"
-                          : "bg-white"
+                      !isSoundOn || volume === 0 ? "bg-zinc-600" : volume <= 0.5 ? "bg-amber-400" : "bg-white"
                     }`}
                     style={{ width: `${Math.round((isSoundOn ? volume : 0) * 100)}%` }}
                   />
@@ -666,9 +659,7 @@ export default function CameraCard({
                   clampOffset(next);
                 }}
                 disabled={scale <= 1}
-                className={`p-1 rounded ${
-                  scale <= 1 ? "text-zinc-600" : "text-zinc-300 hover:text-white hover:bg-zinc-800"
-                }`}
+                className={`p-1 rounded ${scale <= 1 ? "text-zinc-600" : "text-zinc-300 hover:text-white hover:bg-zinc-800"}`}
                 title="Zoom Out"
               >
                 <ZoomOut className="w-3 h-3" />
@@ -681,9 +672,7 @@ export default function CameraCard({
                   clampOffset(next);
                 }}
                 disabled={scale >= 4}
-                className={`p-1 rounded ${
-                  scale >= 4 ? "text-zinc-600" : "text-zinc-300 hover:text-white hover:bg-zinc-800"
-                }`}
+                className={`p-1 rounded ${scale >= 4 ? "text-zinc-600" : "text-zinc-300 hover:text-white hover:bg-zinc-800"}`}
                 title="Zoom In"
               >
                 <ZoomIn className="w-3 h-3" />
@@ -697,11 +686,7 @@ export default function CameraCard({
             className="p-1 rounded bg-black/70 hover:bg-black text-zinc-300 hover:text-white transition-colors border border-zinc-800"
             title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
           >
-            {isFullscreen ? (
-              <Minimize2 className="w-2.5 h-2.5" />
-            ) : (
-              <Maximize2 className="w-2.5 h-2.5" />
-            )}
+            {isFullscreen ? <Minimize2 className="w-2.5 h-2.5" /> : <Maximize2 className="w-2.5 h-2.5" />}
           </button>
         </div>
       </div>
@@ -717,11 +702,7 @@ export default function CameraCard({
           onClick={(event) => {
             event.stopPropagation();
             onQualityChange(
-              qualityPreference === "1080p"
-                ? "720p"
-                : qualityPreference === "720p"
-                  ? "auto"
-                  : "1080p"
+              qualityPreference === "1080p" ? "720p" : qualityPreference === "720p" ? "auto" : "1080p"
             );
           }}
           className="pointer-events-auto px-1.5 py-0.5 rounded bg-black/75 hover:bg-black/95 text-zinc-300 hover:text-white border border-zinc-800 transition-all flex items-center gap-1 cursor-pointer active:scale-95 shadow-sm"
@@ -738,11 +719,7 @@ export default function CameraCard({
           />
           <span className="font-semibold text-white tracking-wider">{trackLabel}</span>
           <span className="text-[8px] text-zinc-400 font-bold uppercase">
-            {qualityPreference === "1080p"
-              ? "MAX"
-              : qualityPreference === "720p"
-                ? "HD"
-                : "AUTO"}
+            {qualityPreference === "1080p" ? "MAX" : qualityPreference === "720p" ? "HD" : "AUTO"}
           </span>
         </button>
       </div>
@@ -752,15 +729,11 @@ export default function CameraCard({
           {status === "loading" ? (
             <div className="space-y-1.5">
               <span className="w-4 h-4 border border-zinc-400 border-t-transparent rounded-full animate-spin inline-block" />
-              <p className="text-[10px] text-zinc-400 tracking-wider">
-                CONNECTING FEED…
-              </p>
+              <p className="text-[10px] text-zinc-400 tracking-wider">CONNECTING FEED…</p>
             </div>
           ) : (
             <div className="max-w-xs space-y-2">
-              <p className="text-[10px] text-zinc-300 leading-relaxed">
-                {message || "SIGNAL INTERRUPTED"}
-              </p>
+              <p className="text-[10px] text-zinc-300 leading-relaxed">{message || "SIGNAL INTERRUPTED"}</p>
               <button
                 type="button"
                 onClick={retry}
