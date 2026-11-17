@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Maximize2,
   Minimize2,
@@ -32,6 +32,8 @@ type Props = {
   onQualityChange: (quality: Quality) => void;
 };
 
+const MAX_AUTO_RETRIES = 6;
+
 const qualityLabel = (quality: Quality): string =>
   quality === "1080p" ? "1080p FHD" : quality === "720p" ? "720p HD" : "AUTO";
 
@@ -51,6 +53,8 @@ export default function CameraCard({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<any>(null);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoRetries = useRef(0);
 
   const [status, setStatus] = useState<"loading" | "live" | "error">("loading");
   const [message, setMessage] = useState("");
@@ -74,6 +78,29 @@ export default function CameraCard({
   qualityRef.current = qualityPreference;
   proxyRef.current = proxyMode;
 
+  const scheduleRetry = useCallback(() => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+
+    if (autoRetries.current >= MAX_AUTO_RETRIES) {
+      setStatus("error");
+      setMessage("Feed unavailable. Tap retry.");
+      return;
+    }
+
+    const delay = Math.min(10000, 700 * Math.pow(1.9, autoRetries.current));
+    autoRetries.current += 1;
+    setStatus("loading");
+    setMessage(`Reconnecting (${autoRetries.current}/${MAX_AUTO_RETRIES})…`);
+
+    retryTimer.current = setTimeout(() => setAttempt((value) => value + 1), delay);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+    };
+  }, []);
+
   useEffect(() => {
     const sync = () => setIsFullscreen(document.fullscreenElement === wrapRef.current);
     document.addEventListener("fullscreenchange", sync);
@@ -92,7 +119,8 @@ export default function CameraCard({
   useEffect(() => {
     let disposed = false;
     let player: any = null;
-    let stalledWatch: ReturnType<typeof setInterval> | null = null;
+    let watchdog: ReturnType<typeof setInterval> | null = null;
+    let lastProgress = Date.now();
 
     const boot = async () => {
       try {
@@ -124,35 +152,29 @@ export default function CameraCard({
               setProxyMode(true);
               return;
             }
-            setStatus("error");
-            setMessage("Source access restricted (HTTP 403).");
+            scheduleRetry();
             return;
           }
 
-          if (code === 4012) {
-            setStatus("error");
-            setMessage("DRM key mismatch (4012).");
+          if (code === 4012 || code === 3015) {
+            scheduleRetry();
             return;
           }
 
-          if (code === 3015) {
-            setStatus("error");
-            setMessage("Decryption failed (3015).");
-            return;
-          }
-
-          setStatus("error");
-          setMessage(detail?.message || `Feed error (${code || "unknown"})`);
+          scheduleRetry();
         });
 
-        video.onplaying = () => {
-          if (!disposed) setStatus("live");
+        const markLive = () => {
+          if (disposed) return;
+          autoRetries.current = 0;
+          setStatus("live");
         };
-        video.onloadeddata = () => {
-          if (!disposed) setStatus("live");
-        };
+
+        video.onplaying = markLive;
+        video.onloadeddata = markLive;
         video.ontimeupdate = () => {
-          if (video.currentTime > 0) setStatus("live");
+          lastProgress = Date.now();
+          if (video.currentTime > 0) markLive();
         };
 
         const res = await fetch(
@@ -166,9 +188,7 @@ export default function CameraCard({
 
         const clearKeys = info?.clearKeys;
         const drm =
-          info?.requiresDrm && clearKeys && Object.keys(clearKeys).length > 0
-            ? { clearKeys }
-            : {};
+          info?.requiresDrm && clearKeys && Object.keys(clearKeys).length > 0 ? { clearKeys } : {};
 
         const quality = qualityRef.current;
 
@@ -176,17 +196,16 @@ export default function CameraCard({
           drm,
           abr: {
             enabled: quality === "auto",
-            defaultBandwidthEstimate:
-              quality === "1080p" ? 16e6 : quality === "720p" ? 8e6 : 12e6,
+            defaultBandwidthEstimate: quality === "1080p" ? 16e6 : quality === "720p" ? 8e6 : 12e6,
             switchInterval: 4,
             restrictions: { maxHeight: quality === "720p" ? 720 : 1080, minHeight: 0 },
           },
           streaming: {
-            bufferingGoal: 16,
+            bufferingGoal: 18,
             rebufferingGoal: 2,
             bufferBehind: 10,
             lowLatencyMode: false,
-            retryParameters: { maxAttempts: 6, baseDelay: 400, backoffFactor: 2 },
+            retryParameters: { maxAttempts: 8, baseDelay: 400, backoffFactor: 2, timeout: 20000 },
             stallEnabled: true,
             stallThreshold: 1,
             safeSeekOffset: 12,
@@ -194,12 +213,8 @@ export default function CameraCard({
             jumpLargeGaps: true,
           },
           manifest: {
-            dash: {
-              autoCorrectDrift: true,
-              defaultPresentationDelay: 12,
-              ignoreMinBufferTime: true,
-            },
-            retryParameters: { maxAttempts: 6, baseDelay: 400, backoffFactor: 2 },
+            dash: { autoCorrectDrift: true, defaultPresentationDelay: 12, ignoreMinBufferTime: true },
+            retryParameters: { maxAttempts: 8, baseDelay: 400, backoffFactor: 2 },
           },
         });
 
@@ -217,19 +232,14 @@ export default function CameraCard({
               .filter((track: any) => !track.height || track.height <= cap)
               .sort(
                 (a: any, b: any) =>
-                  (b.height || 0) - (a.height || 0) ||
-                  (b.bandwidth || 0) - (a.bandwidth || 0)
+                  (b.height || 0) - (a.height || 0) || (b.bandwidth || 0) - (a.bandwidth || 0)
               )[0];
             if (!chosen) return;
 
             player.selectVariantTrack(chosen, false);
             if (chosen.height) {
               setTrackLabel(
-                chosen.height >= 1080
-                  ? "1080p FHD"
-                  : chosen.height >= 720
-                    ? "720p HD"
-                    : `${chosen.height}p`
+                chosen.height >= 1080 ? "1080p FHD" : chosen.height >= 720 ? "720p HD" : `${chosen.height}p`
               );
             }
           } catch {
@@ -238,14 +248,18 @@ export default function CameraCard({
         };
 
         let loaded = false;
-        for (const uri of [info?.manifestUri, info?.proxiedManifestUri].filter(Boolean)) {
+        const candidates = Array.from(
+          new Set([info?.manifestUri, info?.proxiedManifestUri].filter(Boolean))
+        );
+
+        for (const uri of candidates) {
           for (let i = 0; i < 2 && !loaded; i++) {
             try {
               await player.load(uri as string);
               loaded = true;
             } catch {
               if (disposed) return;
-              await new Promise((r) => setTimeout(r, 600));
+              await new Promise((r) => setTimeout(r, 700));
             }
           }
           if (loaded) break;
@@ -257,20 +271,12 @@ export default function CameraCard({
         applyTrack();
         player.addEventListener("variantchanged", applyTrack);
 
-        // Keep the playhead pinned to the live edge.
-        try {
-          player.setTextTrackVisibility?.(false);
-        } catch {
-          /* ignore */
-        }
-
         const seekLive = () => {
           try {
             const range = player.seekRange();
             if (!range || !isFinite(range.end)) return;
-            const target = Math.max(range.start, range.end - 4);
             if (video.currentTime < range.end - 12 || video.currentTime > range.end) {
-              video.currentTime = target;
+              video.currentTime = Math.max(range.start, range.end - 4);
             }
           } catch {
             /* ignore */
@@ -289,25 +295,35 @@ export default function CameraCard({
         }
 
         setTimeout(seekLive, 1200);
-        stalledWatch = setInterval(() => {
-          if (disposed || !video) return;
-          if (document.visibilityState !== "visible") return;
+        lastProgress = Date.now();
+
+        watchdog = setInterval(() => {
+          if (disposed || !video || document.visibilityState !== "visible") return;
+
           try {
             const range = player.seekRange?.();
             if (range && isFinite(range.end) && range.end - video.currentTime > 20) {
               video.currentTime = Math.max(range.start, range.end - 4);
+              lastProgress = Date.now();
             }
-            if (video.paused) video.play().catch(() => undefined);
           } catch {
             /* ignore */
           }
-        }, 10000);
+
+          if (video.paused) video.play().catch(() => undefined);
+
+          // Nothing buffered for 12s -> rebuild the pipeline.
+          if (Date.now() - lastProgress > 12000) {
+            lastProgress = Date.now();
+            scheduleRetry();
+          }
+        }, 8000);
 
         setStatus("live");
       } catch (error: any) {
         if (disposed) return;
-        setStatus("error");
-        setMessage(error?.message || "Connection interrupted");
+        if (error?.message) setMessage(error.message);
+        scheduleRetry();
       }
     };
 
@@ -315,14 +331,14 @@ export default function CameraCard({
 
     return () => {
       disposed = true;
-      if (stalledWatch) clearInterval(stalledWatch);
+      if (watchdog) clearInterval(watchdog);
       try {
         player?.destroy?.();
       } catch {
         /* ignore */
       }
     };
-  }, [channel.id, proxyMode, attempt]);
+  }, [channel.id, proxyMode, attempt, scheduleRetry]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -417,9 +433,10 @@ export default function CameraCard({
     if (!isSoundOn) onToggleSound(channel.id);
   };
 
-  const retry = () => {
-    setStatus("loading");
+  const manualRetry = () => {
+    autoRetries.current = 0;
     setMessage("");
+    setStatus("loading");
     try {
       playerRef.current?.destroy?.();
     } catch {
@@ -564,11 +581,20 @@ export default function CameraCard({
         }`}
       >
         <div className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              status === "live" ? "bg-emerald-400 animate-pulse" : "bg-white animate-pulse"
+            }`}
+          />
           <span className="text-[10px] sm:text-xs font-medium tracking-wider text-white uppercase">
             {channel.name}
           </span>
           <span className="text-[9px] text-zinc-500 hidden sm:inline">{channel.code}</span>
+          {status === "live" ? (
+            <span className="text-[8px] font-bold tracking-widest text-emerald-400 border border-emerald-500/40 rounded px-1 py-px hidden sm:inline">
+              LIVE
+            </span>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-1 sm:gap-1.5 pointer-events-auto">
@@ -729,14 +755,14 @@ export default function CameraCard({
           {status === "loading" ? (
             <div className="space-y-1.5">
               <span className="w-4 h-4 border border-zinc-400 border-t-transparent rounded-full animate-spin inline-block" />
-              <p className="text-[10px] text-zinc-400 tracking-wider">CONNECTING FEED…</p>
+              <p className="text-[10px] text-zinc-400 tracking-wider">{message || "CONNECTING FEED…"}</p>
             </div>
           ) : (
             <div className="max-w-xs space-y-2">
               <p className="text-[10px] text-zinc-300 leading-relaxed">{message || "SIGNAL INTERRUPTED"}</p>
               <button
                 type="button"
-                onClick={retry}
+                onClick={manualRetry}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] transition-colors border border-zinc-800"
               >
                 <RotateCw className="w-2.5 h-2.5" />
