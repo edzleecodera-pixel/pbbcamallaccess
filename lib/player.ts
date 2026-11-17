@@ -13,10 +13,13 @@ export async function loadShaka(): Promise<any> {
   return shakaPromise;
 }
 
-export const toU8 = (d: any): Uint8Array =>
-  ArrayBuffer.isView(d)
-    ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength)
-    : new Uint8Array(d instanceof ArrayBuffer ? d : 0);
+export const toU8 = (d: any): Uint8Array => {
+  if (ArrayBuffer.isView(d)) {
+    return new Uint8Array(d.buffer as ArrayBuffer, d.byteOffset, d.byteLength);
+  }
+  if (d instanceof ArrayBuffer) return new Uint8Array(d);
+  return new Uint8Array(0);
+};
 
 const type = (d: Uint8Array, o: number) =>
   String.fromCharCode(d[o], d[o + 1], d[o + 2], d[o + 3]);
