@@ -1,15 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Eye,
-  Heart,
-  Maximize,
-  Minimize,
-  Scaling,
-  Volume2,
-  VolumeX,
-} from "lucide-react";
+import { Eye, Heart, Maximize, Minimize, Scaling, Volume2, VolumeX } from "lucide-react";
+import { useViewers } from "@/lib/useViewers";
 import LiveClock from "./LiveClock";
 
 type Props = {
@@ -20,25 +13,6 @@ type Props = {
   onOpenSupport: () => void;
 };
 
-function audienceSeed(): number {
-  try {
-    const hour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Manila",
-        hour: "numeric",
-        hour12: false,
-      }).format(new Date()),
-      10
-    );
-    if (hour >= 19 && hour <= 23) return Math.floor(540 + 240 * Math.random());
-    if (hour >= 12 && hour < 19) return Math.floor(280 + 150 * Math.random());
-    if (hour >= 7 && hour < 12) return Math.floor(140 + 100 * Math.random());
-    return Math.floor(55 + 55 * Math.random());
-  } catch {
-    return 320;
-  }
-}
-
 export default function Header({
   fitMode,
   onToggleFit,
@@ -46,38 +20,8 @@ export default function Header({
   onToggleAllAudio,
   onOpenSupport,
 }: Props) {
-  const [viewers, setViewers] = useState(342);
+  const viewers = useViewers();
   const [isFullscreen, setIsFullscreen] = useState(false);
-
-  useEffect(() => {
-    let initial = 342;
-    try {
-      const stored = sessionStorage.getItem("pbb_sim_viewers");
-      if (stored) {
-        initial = parseInt(stored, 10);
-      } else {
-        initial = audienceSeed();
-        sessionStorage.setItem("pbb_sim_viewers", String(initial));
-      }
-    } catch {
-      initial = audienceSeed();
-    }
-    setViewers(initial);
-
-    const timer = setInterval(() => {
-      setViewers((previous) => {
-        const next = Math.max(30, previous + (Math.floor(7 * Math.random()) - 3));
-        try {
-          sessionStorage.setItem("pbb_sim_viewers", String(next));
-        } catch {
-          /* ignore */
-        }
-        return next;
-      });
-    }, 9000);
-
-    return () => clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     const sync = () => setIsFullscreen(Boolean(document.fullscreenElement));
@@ -102,18 +46,22 @@ export default function Header({
           <span className="hidden sm:inline">PBB COLLAB 3.0</span>
         </span>
         <span className="text-zinc-700 hidden sm:inline">/</span>
+
         <div
           className="flex items-center gap-1 sm:gap-1.5 text-[11px] sm:text-sm text-zinc-400 shrink-0"
-          title={`${viewers.toLocaleString()} watching right now`}
+          title={
+            viewers === null
+              ? "Counting viewers…"
+              : `${viewers.toLocaleString()} watching right now`
+          }
         >
           <Eye className="w-3 h-3 sm:w-4 sm:h-4 shrink-0" />
           <span className="font-semibold text-zinc-200 tabular-nums">
-            {viewers.toLocaleString()}
+            {viewers === null ? "—" : viewers.toLocaleString()}
           </span>
         </div>
-        <span className="text-zinc-500 text-xs hidden lg:inline font-medium">
-          CCTV
-        </span>
+
+        <span className="text-zinc-500 text-xs hidden lg:inline font-medium">CCTV</span>
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2 shrink-0">
@@ -129,9 +77,7 @@ export default function Header({
         >
           <Scaling className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
           <span className="hidden md:inline font-medium">Fit:</span>
-          <span className="uppercase text-[9px] sm:text-[11px] font-bold">
-            {fitMode}
-          </span>
+          <span className="uppercase text-[9px] sm:text-[11px] font-bold">{fitMode}</span>
         </button>
 
         <button
@@ -184,15 +130,11 @@ export default function Header({
         >
           <span className="absolute inset-x-2 top-0 h-px bg-gradient-to-r from-transparent via-white/70 to-transparent pointer-events-none rounded-t-full" />
           <Heart className="w-3 h-3 sm:w-4 sm:h-4 text-rose-400 fill-rose-500/60 group-hover:scale-110 group-hover:fill-rose-500 transition-all duration-200 shrink-0" />
-          <span className="tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-            Support
-          </span>
+          <span className="tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">Support</span>
         </button>
 
         <div className="hidden md:flex items-center gap-1.5 text-zinc-400 text-xs sm:text-sm whitespace-nowrap">
-          <span className="text-[11px] text-zinc-600 uppercase font-bold">
-            PHT
-          </span>
+          <span className="text-[11px] text-zinc-600 uppercase font-bold">PHT</span>
           <time className="text-white font-semibold">
             <LiveClock />
           </time>
