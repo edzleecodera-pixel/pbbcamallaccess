@@ -14,9 +14,7 @@ export function useViewers(): number | null {
     }
 
     if (!stored) {
-      stored =
-        globalThis.crypto?.randomUUID?.() ||
-        `v-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+      stored = globalThis.crypto?.randomUUID?.() || `v-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       try {
         sessionStorage.setItem("pbb_viewer_sid", stored);
       } catch {
